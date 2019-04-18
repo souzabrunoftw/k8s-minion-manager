@@ -61,7 +61,7 @@ class AWSBidAdvisor(object):
     """
 
     def __init__(self, on_demand_refresh_interval, spot_refresh_interval,
-                 region):
+                 region, threshold):
         # This dictionary stores pricing information about on-demand instances
         # for all instance types.
         # E.g. {'d2.2xlarge': '1.3800000000', 'g2.8xlarge': '2.6000000000',
@@ -88,6 +88,12 @@ class AWSBidAdvisor(object):
         # refreshed. This information can change frequently. This refresh
         # interval therefore should be in the order of few minutes.
         self.spot_refresh_interval = spot_refresh_interval
+
+        # The max percentage that will be paid over OnDemand price, defaulting
+        # to 80%. For example, if OnDemand price is $0.10, for an 80% threshold,
+        # spot price should be lesser or equal to $0.08, otherwise OnDemand
+        # should be chosen.
+        self.threshold = threshold
 
         self.region = region
         self.terminate_thread = False
@@ -240,8 +246,8 @@ class AWSBidAdvisor(object):
     def basic_bid_strategy(self, spot_price, on_demand_price, bid_options):
         """
         Implements a very basic bid strategy. Checks if the spot instance price
-        less than or equal to 80% of on-demand price. If so, selects the spot
-        price. Otherwise chooses the on-demand price.
+        less than or equal to a percentage informed by the user (defaults 80%) over on-demand price.
+        If so, selects the spot price. Otherwise chooses the on-demand price.
 
         If the spot instance price is closer to the on-demand price, on-demand
         instances are chosen for reliability reasons (on-demand instances won't
@@ -259,7 +265,7 @@ class AWSBidAdvisor(object):
         bid_info = {}
         threshold = bid_options["spot_to_on_demand_threshold"]
 
-        if spot_price <= threshold * on_demand_price:
+        if spot_price <= threshold / 100 * on_demand_price:
             bid_info["price"] = str(on_demand_price)
             bid_info["type"] = "spot"
         else:
@@ -344,7 +350,7 @@ class AWSBidAdvisor(object):
                         "for instance type: %s, zones: %s",
                         spot_price, on_demand_price, instance_type, zones)
 
-            bid_options = {"spot_to_on_demand_threshold": 0.8}
+            bid_options = {"spot_to_on_demand_threshold": self.threshold}
             return self.basic_bid_strategy(spot_price, on_demand_price,
                                            bid_options)
 

@@ -46,6 +46,7 @@ class AWSMinionManager(MinionManagerBase):
         self._ac_client = boto_session.client('autoscaling')
         self._ec2_client = boto_session.client('ec2')
 
+        self.threshold = kwargs.get("threshold")
         self._refresh_interval_seconds = refresh_interval_seconds
         self._asg_metas = []
         self.instance_type = None

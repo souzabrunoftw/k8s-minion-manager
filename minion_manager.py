@@ -42,6 +42,7 @@ def run():
     parser.add_argument("--cluster-name", required=True, help="Name of the Kubernetes cluster. Get's used for identifying ASGs")
     parser.add_argument("--monitor-nodes", default=False,
                         help="Check if nodes are 'Ready' and terminate if not")
+    parser.add_argument("--threshold", default=80, help="Max percentage to pay over OnDemand price")
 
     usr_args = parser.parse_args()
     validate_usr_args(usr_args)
@@ -53,7 +54,7 @@ def run():
     if usr_args.cloud == "aws":
         minion_manager = Broker.get_impl_object(
             usr_args.cloud, usr_args.cluster_name, usr_args.region, int(usr_args.refresh_interval_seconds),
-            aws_profile=usr_args.profile, monitor_nodes=usr_args.monitor_nodes)
+            aws_profile=usr_args.profile, monitor_nodes=usr_args.monitor_nodes, threshold=usr_args.threshold)
         minion_manager.run()
 
 # A journey of a thousand miles ...
