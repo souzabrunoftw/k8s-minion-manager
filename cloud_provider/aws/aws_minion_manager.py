@@ -1,6 +1,7 @@
 """Minion Manager implementation for AWS."""
 
 import logging
+import re
 import sys
 import time
 import base64
@@ -18,7 +19,7 @@ from cloud_provider.aws.aws_bid_advisor import AWSBidAdvisor
 from cloud_provider.aws.price_info_reporter import AWSPriceReporter
 from kubernetes import client, config
 from ..base import MinionManagerBase
-from .asg_mm import AWSAutoscalinGroupMM
+from .asg_mm import AWSAutoscalinGroupMM, MINION_MANAGER_LABEL
 
 logger = logging.getLogger("aws_minion_manager")
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s " +
@@ -112,9 +113,16 @@ class AWSMinionManager(MinionManagerBase):
             if not is_candidate:
                 continue
             for tag in r['Tags']:
-                if tag['Key'] == 'k8s-minion-manager':
+                if tag['Key'] == MINION_MANAGER_LABEL:
                     response["AutoScalingGroups"].append(r)
                     break
+        return bunchify(response)
+
+    @staticmethod
+    @retry(wait_exponential_multiplier=1000, stop_max_attempt_number=3)
+    def describe_spot_request_with_retries(ec2_client, request_ids):
+        response = ec2_client.describe_spot_instance_requests(
+            SpotInstanceRequestIds=request_ids)
         return bunchify(response)
 
     def discover_asgs(self):
@@ -124,7 +132,8 @@ class AWSMinionManager(MinionManagerBase):
             asg_mm = AWSAutoscalinGroupMM()
             asg_mm.set_asg_info(asg)
             self._asg_metas.append(asg_mm)
-            logger.info("Adding asg %s (%s)", asg_mm.get_name(), asg_mm.get_mm_tag())
+            logger.info("Adding asg %s (%s). Can manager terminate instance: %s", asg_mm.get_name(),
+                        asg_mm.get_mm_tag(), "no " if asg_mm.not_terminate_instance() else "yes")
 
     def populate_current_config(self):
         """
@@ -485,6 +494,12 @@ class AWSMinionManager(MinionManagerBase):
         instances = asg_meta.get_instances()
         if len(instances) == 0:
             return
+        
+        """
+        Check is ASG set not to terminate instance
+        """
+        if asg_meta.not_terminate_instance():
+            return
 
         # If the ASG is configured to use "no-spot" or the required tag does not exist,
         # do not schedule any instance termination.
@@ -697,6 +712,8 @@ class AWSMinionManager(MinionManagerBase):
         INSUFFICIENT_CAPACITY_MESSAGE = ['We currently do not have sufficient',
                                            'capacity in the Availability Zone you requested']
         
+        WAITING_SPOT_INSTANCE_MESSAGE = ['Placed Spot instance request:', 'Waiting for instance(s)']
+        
         asg_info = scaling_group.get_asg_info()
         response = AWSMinionManager.describe_asg_activities_with_retries(
             self._ac_client, asg_info.AutoScalingGroupName)
@@ -708,6 +725,27 @@ class AWSMinionManager(MinionManagerBase):
             if 'StatusMessage' in activity and len([message for message in INSUFFICIENT_CAPACITY_MESSAGE if message in activity.StatusMessage]) == len(INSUFFICIENT_CAPACITY_MESSAGE):
                 return True
             
+            # Check spot request status code
+            if 'StatusMessage' in activity and len([message for message in WAITING_SPOT_INSTANCE_MESSAGE if message in activity.StatusMessage]) == len(WAITING_SPOT_INSTANCE_MESSAGE):
+                spot_req_regex = re.compile('Placed Spot instance request: (?P<spot_req_id>sir-[a-zA-Z0-9]+)\. Waiting for instance\(s\)')
+                spot_req_re_result = spot_req_regex.search(activity.StatusMessage)
+                if spot_req_re_result is not None and \
+                        self.check_spot_request_insufficient_capacity(spot_req_re_result.group('spot_req_id')):
+                    return True
+            
+        return False
+    
+    def check_spot_request_insufficient_capacity(self, spot_request):
+        OVERSUBSCRIBED_MESSAGE = 'capacity-oversubscribed'
+        CAPACITY_NOT_AVAILABLE = 'capacity-not-available'
+        
+        response = AWSMinionManager.describe_spot_request_with_retries(self._ec2_client, [spot_request])
+        requests = response.SpotInstanceRequests
+        for request in requests:
+            if 'Status' in request and 'Code' in request.Status:
+                if OVERSUBSCRIBED_MESSAGE == request.Status.Code or CAPACITY_NOT_AVAILABLE == request.Status.Code:
+                    return True
+                
         return False
         
     def get_asg_metas(self):

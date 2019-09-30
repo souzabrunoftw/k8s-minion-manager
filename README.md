@@ -28,6 +28,7 @@ The IAM role of the node that runs the minion-manager should have the following 
         "ec2:DescribeInstances",
         "ec2:TerminateInstances",
         "ec2:DescribeSpotPriceHistory",
+        "ec2:DescribeSpotInstanceRequests",
         "autoscaling:CreateLaunchConfiguration",
         "autoscaling:DeleteLaunchConfiguration",
         "autoscaling:DescribeLaunchConfigurations",
@@ -60,6 +61,7 @@ Then, `kubectl apply -f deploy/mm.yaml`.
     * "use-spot": This will make the minion-manager intelligently use spot instances in the ASG
     * "no-spot": This will make the minion-manager always use on-demand instances in the ASG. This is useful when someone wants to temporarily switch to on-demand instances and at a later point switch to "use-spot"
     * Note that after changing the tag value, it may take upto 5 minutes for the minion-manager pod to see the changes and make them take effect.
+* The "k8s-minion-manager/not-terminate" tag can control ASG instance terminate by the minion-manager. If you want to control when to terminate ASG instances. You can set this tag to `true`. If not set or other value will disable this feature.
 
 **What happens when:**
 
@@ -86,3 +88,7 @@ This will be a multi-step process:
 * Wait for the minion-manager to react to this and switch the instances to on-demand. Look at the AWS console for verifying that all instances are on-demand.
 * After the above, remove the "k8s-minion-manager" tag.
 * Delete the "k8s-minion-manager" deployment.
+
+**How do I:**
+
+ _1. Run unit tests: Ensure that your AWS cli is set up correctly. Then simply run `make docker-test`_
